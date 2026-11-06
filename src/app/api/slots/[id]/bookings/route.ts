@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 import {
   bookSeats,
   describeBookingFailure,
+  IDEMPOTENCY_KEY_HEADER,
+  isValidIdempotencyKey,
   isValidSeatCount,
 } from "@/lib/bookings";
 import { getDb } from "@/lib/db/connection";
@@ -40,7 +42,20 @@ export async function POST(
     );
   }
 
-  const result = bookSeats(db, { slotId, userId: user.id, seats });
+  const idempotencyKey = request.headers.get(IDEMPOTENCY_KEY_HEADER);
+  if (idempotencyKey !== null && !isValidIdempotencyKey(idempotencyKey)) {
+    return Response.json(
+      { error: "The booking request was not valid. Please try again." },
+      { status: 400 },
+    );
+  }
+
+  const result = bookSeats(db, {
+    slotId,
+    userId: user.id,
+    seats,
+    idempotencyKey: idempotencyKey ?? undefined,
+  });
 
   if (!result.ok) {
     return Response.json(
@@ -58,6 +73,6 @@ export async function POST(
       booking: { id: result.bookingId, slotId, seats: result.seats },
       seatsLeft: result.seatsLeft,
     },
-    { status: 201 },
+    { status: result.replayed ? 200 : 201 },
   );
 }

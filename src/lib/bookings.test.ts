@@ -84,6 +84,88 @@ describe("bookSeats", () => {
     expect(result).toEqual({ ok: false, reason: "slot_not_found" });
   });
 
+  describe("with an idempotency key", () => {
+    const bookWithKey = (seats: number, overrides = {}) =>
+      bookSeats(db, {
+        slotId: SLOT,
+        userId: SARA,
+        seats,
+        now: BEFORE_START,
+        idempotencyKey: "attempt-1",
+        ...overrides,
+      });
+
+    it("returns the original booking when a request is retried", () => {
+      const first = bookWithKey(2);
+      const retry = bookWithKey(2);
+
+      expect(first).toMatchObject({ ok: true, replayed: false, seatsLeft: 3 });
+      expect(retry).toMatchObject({
+        ok: true,
+        replayed: true,
+        seatsLeft: 3,
+        bookingId: (first as { bookingId: number }).bookingId,
+      });
+      expect(bookingCount()).toBe(1);
+    });
+
+    it("still succeeds on retry after the slot has filled up", () => {
+      bookWithKey(2);
+      book(3);
+
+      expect(bookWithKey(2)).toMatchObject({ ok: true, replayed: true, seatsLeft: 0 });
+      expect(bookingCount()).toBe(2);
+    });
+
+    it("still succeeds on retry after the slot has started", () => {
+      bookWithKey(2);
+
+      const retry = bookWithKey(2, { now: new Date("2030-01-01T09:30:00.000Z") });
+
+      expect(retry).toMatchObject({ ok: true, replayed: true });
+    });
+
+    it("reports the seats of the original booking, not the retry", () => {
+      bookWithKey(2);
+
+      expect(bookWithKey(4)).toMatchObject({ ok: true, replayed: true, seats: 2 });
+    });
+
+    it("books again with a different key", () => {
+      bookWithKey(1);
+
+      expect(bookWithKey(1, { idempotencyKey: "attempt-2" })).toMatchObject({
+        ok: true,
+        replayed: false,
+      });
+      expect(bookingCount()).toBe(2);
+    });
+
+    it("does not let another user's key match", () => {
+      db.exec("INSERT INTO users (id, name, selectable) VALUES (2, 'Abel', 1)");
+      bookWithKey(1);
+
+      expect(bookWithKey(1, { userId: 2 })).toMatchObject({ ok: true, replayed: false });
+      expect(bookingCount()).toBe(2);
+    });
+
+    it("does not match the same key on another slot", () => {
+      db.exec(`INSERT INTO tour_slots (id, place_id, starts_at, capacity)
+               VALUES (2, 1, '2030-01-01T11:00:00.000Z', 5)`);
+      bookWithKey(1);
+
+      expect(bookWithKey(1, { slotId: 2 })).toMatchObject({ ok: true, replayed: false });
+      expect(bookingCount()).toBe(2);
+    });
+
+    it("treats requests without a key as separate bookings", () => {
+      book(1);
+      book(1);
+
+      expect(bookingCount()).toBe(2);
+    });
+  });
+
   it("rejects a slot that has already started", () => {
     const atStart = new Date("2030-01-01T09:00:00.000Z");
 

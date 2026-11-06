@@ -44,7 +44,9 @@ const SCHEMA = `
     slot_id    INTEGER NOT NULL REFERENCES tour_slots (id),
     user_id    INTEGER NOT NULL REFERENCES users (id),
     seats      INTEGER NOT NULL CHECK (seats > 0),
-    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    idempotency_key TEXT,
+    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (slot_id, user_id, idempotency_key)
   );
 
   CREATE INDEX IF NOT EXISTS idx_tour_slots_place_id ON tour_slots (place_id);

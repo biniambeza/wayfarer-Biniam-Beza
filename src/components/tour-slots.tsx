@@ -1,12 +1,20 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { fetchJson } from "@/lib/client/fetch-json";
+import { IDEMPOTENCY_KEY_HEADER } from "@/lib/bookings";
+import { newAttemptKey } from "@/lib/client/attempt-key";
+import { ApiError, fetchJson } from "@/lib/client/fetch-json";
 import { formatSeats, formatSlotTime } from "@/lib/format";
 import type { TourSlot } from "@/lib/places";
 import { useActingUser } from "./acting-user-provider";
 
 type Outcome = { kind: "success" | "error"; text: string };
+
+// A 4xx means the server definitely refused. Anything else (no response, or a 5xx)
+// leaves it unknown whether the booking went through.
+function isOutcomeUnknown(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
+}
 
 function SlotRow({
   slot,
@@ -22,6 +30,9 @@ function SlotRow({
   // A second click can land before the re-render that disables the button, so
   // isBooking alone would let a double click book twice. A ref updates at once.
   const requestInFlight = useRef(false);
+  // Stays the same across retries of one attempt, so the server can recognise a
+  // repeat if the first request worked but its response never arrived.
+  const attemptKey = useRef<string | null>(null);
 
   const isFull = slot.seatsLeft === 0;
   // Seats left can fall after a refresh, so the choice can't be taken as still valid.
@@ -34,19 +45,34 @@ function SlotRow({
     requestInFlight.current = true;
     setIsBooking(true);
     setOutcome(null);
+    attemptKey.current ??= newAttemptKey();
     try {
-      await fetchJson(`/api/slots/${slot.id}/bookings`, {
-        method: "POST",
-        userId: currentUser.id,
-        body: { seats },
-      });
+      const { booking } = await fetchJson<{ booking: { seats: number } }>(
+        `/api/slots/${slot.id}/bookings`,
+        {
+          method: "POST",
+          userId: currentUser.id,
+          body: { seats },
+          headers: { [IDEMPOTENCY_KEY_HEADER]: attemptKey.current },
+        },
+      );
+      attemptKey.current = null;
       setOutcome({
         kind: "success",
-        text: `Booked ${formatSeats(seats)} for ${currentUser.name}.`,
+        text: `Booked ${formatSeats(booking.seats)} for ${currentUser.name}.`,
       });
       setRequestedSeats(1);
     } catch (error) {
-      setOutcome({ kind: "error", text: (error as Error).message });
+      const message = (error as Error).message;
+      if (isOutcomeUnknown(error)) {
+        setOutcome({
+          kind: "error",
+          text: `${message} It's safe to press Book again: you won't be booked twice.`,
+        });
+      } else {
+        attemptKey.current = null;
+        setOutcome({ kind: "error", text: message });
+      }
     } finally {
       requestInFlight.current = false;
       setIsBooking(false);
@@ -75,7 +101,11 @@ function SlotRow({
                 className="rounded-md border border-stone-300 bg-white px-2 py-1.5 text-stone-900"
                 value={seats}
                 disabled={isBooking}
-                onChange={(event) => setRequestedSeats(Number(event.target.value))}
+                onChange={(event) => {
+                  // A different number of seats is a new attempt, not a retry.
+                  attemptKey.current = null;
+                  setRequestedSeats(Number(event.target.value));
+                }}
               >
                 {Array.from({ length: slot.seatsLeft }, (_, i) => (
                   <option key={i + 1} value={i + 1}>

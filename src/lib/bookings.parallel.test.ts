@@ -24,12 +24,14 @@ const SEATS_LEFT = CAPACITY - ALREADY_BOOKED;
 const SLOT = 1;
 const USER = 1;
 
-function startWorker(dbPath: string): { child: ChildProcess; ready: Promise<void> } {
-  const child = fork(
-    WORKER_PATH,
-    [dbPath, String(SLOT), String(USER), String(ATTEMPTS_PER_WORKER)],
-    { execArgv: ["--import", "tsx"] },
-  );
+function startWorker(
+  dbPath: string,
+  idempotencyKey?: string,
+): { child: ChildProcess; ready: Promise<void> } {
+  const args = [dbPath, String(SLOT), String(USER), String(ATTEMPTS_PER_WORKER)];
+  if (idempotencyKey) args.push(idempotencyKey);
+
+  const child = fork(WORKER_PATH, args, { execArgv: ["--import", "tsx"] });
   const ready = new Promise<void>((resolve, reject) => {
     child.once("message", () => resolve());
     child.once("error", reject);
@@ -42,6 +44,22 @@ function reportFrom(child: ChildProcess): Promise<WorkerReport> {
   return new Promise((resolve) => {
     child.once("message", (report) => resolve(report as WorkerReport));
   });
+}
+
+/** Starts every worker, then releases them together and collects their reports. */
+async function runWorkers(dbPath: string, idempotencyKey?: string) {
+  const workers = Array.from({ length: WORKER_COUNT }, () =>
+    startWorker(dbPath, idempotencyKey),
+  );
+  await Promise.all(workers.map((worker) => worker.ready));
+
+  // Collect the reports before sending "go" so that none can be missed.
+  const reports = workers.map(({ child }) => {
+    child.removeAllListeners("exit");
+    return reportFrom(child);
+  });
+  for (const { child } of workers) child.send("go");
+  return Promise.all(reports);
 }
 
 describe("booking under parallel requests", () => {
@@ -70,18 +88,7 @@ describe("booking under parallel requests", () => {
   it(
     "never overbooks a nearly full slot",
     async () => {
-      const workers = Array.from({ length: WORKER_COUNT }, () =>
-        startWorker(db.name),
-      );
-      await Promise.all(workers.map((worker) => worker.ready));
-
-      // Collect the reports before sending "go" so that none can be missed.
-      const reports = workers.map(({ child }) => {
-        child.removeAllListeners("exit");
-        return reportFrom(child);
-      });
-      for (const { child } of workers) child.send("go");
-      const results = await Promise.all(reports);
+      const results = await runWorkers(db.name);
 
       const { booked } = db
         .prepare("SELECT SUM(seats) AS booked FROM bookings WHERE slot_id = ?")
@@ -93,6 +100,23 @@ describe("booking under parallel requests", () => {
       expect(booked).toBe(CAPACITY);
       expect(newlyBooked).toBe(SEATS_LEFT);
       expect(rejected).toBe(WORKER_COUNT * ATTEMPTS_PER_WORKER - SEATS_LEFT);
+    },
+    60_000,
+  );
+
+  it(
+    "books once when the same request is retried in parallel",
+    async () => {
+      const results = await runWorkers(db.name, "same-attempt");
+
+      const bookings = db
+        .prepare("SELECT seats FROM bookings WHERE idempotency_key = 'same-attempt'")
+        .all();
+      const replayed = results.reduce((sum, r) => sum + r.replayed, 0);
+
+      expect(results.flatMap((r) => r.errors)).toEqual([]);
+      expect(bookings).toEqual([{ seats: 1 }]);
+      expect(replayed).toBe(WORKER_COUNT * ATTEMPTS_PER_WORKER - 1);
     },
     60_000,
   );

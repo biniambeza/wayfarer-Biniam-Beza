@@ -14,14 +14,15 @@ interface FetchJsonOptions {
   userId?: number | null;
   body?: unknown;
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 /** Calls the API. Any failure throws an ApiError with a message fit to show users. */
 export async function fetchJson<T>(
   url: string,
-  { method = "GET", userId, body, signal }: FetchJsonOptions = {},
+  { method = "GET", userId, body, signal, headers: extraHeaders }: FetchJsonOptions = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...extraHeaders };
   if (userId != null) headers[USER_ID_HEADER] = String(userId);
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
