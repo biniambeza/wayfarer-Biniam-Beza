@@ -20,6 +20,20 @@ export function isValidSeatCount(seats: unknown): seats is number {
   return Number.isSafeInteger(seats) && (seats as number) >= 1;
 }
 
+export function describeBookingFailure(failure: BookingFailure): string {
+  switch (failure.reason) {
+    case "slot_not_found":
+      return "This tour could not be found.";
+    case "slot_started":
+      return "This tour has already started.";
+    case "not_enough_seats":
+      if (failure.seatsLeft === 0) return "This tour is fully booked.";
+      return failure.seatsLeft === 1
+        ? "Only 1 seat is left on this tour."
+        : `Only ${failure.seatsLeft} seats are left on this tour.`;
+  }
+}
+
 function readSlot(db: Database, slotId: number) {
   return db
     .prepare(
@@ -33,30 +47,38 @@ function readSlot(db: Database, slotId: number) {
     .get(slotId) as { startsAt: string; seatsLeft: number } | undefined;
 }
 
-// KNOWN BUG: checks the seats and then inserts as two separate steps, so two
-// processes can both see the last seat as free and both book it.
+// The seat check and the insert must act as one step, or two processes can both
+// see the last seat as free and both book it. BEGIN IMMEDIATE takes SQLite's write
+// lock before the check runs, so other writers wait until this booking commits and
+// then see its seats. A plain (deferred) transaction is not enough: it reads first
+// and takes the lock at the insert, and if another booking committed in between,
+// SQLite fails it with "database is locked" (17 of 80 requests in the parallel test).
 export function bookSeats(
   db: Database,
   { slotId, userId, seats, now = new Date() }: BookingRequest,
 ): BookingResult {
-  const slot = readSlot(db, slotId);
+  const checkAndInsert = db.transaction((): BookingResult => {
+    const slot = readSlot(db, slotId);
 
-  if (!slot) return { ok: false, reason: "slot_not_found" };
-  if (slot.startsAt <= now.toISOString()) {
-    return { ok: false, reason: "slot_started" };
-  }
-  if (seats > slot.seatsLeft) {
-    return { ok: false, reason: "not_enough_seats", seatsLeft: slot.seatsLeft };
-  }
+    if (!slot) return { ok: false, reason: "slot_not_found" };
+    if (slot.startsAt <= now.toISOString()) {
+      return { ok: false, reason: "slot_started" };
+    }
+    if (seats > slot.seatsLeft) {
+      return { ok: false, reason: "not_enough_seats", seatsLeft: slot.seatsLeft };
+    }
 
-  const { lastInsertRowid } = db
-    .prepare("INSERT INTO bookings (slot_id, user_id, seats) VALUES (?, ?, ?)")
-    .run(slotId, userId, seats);
+    const { lastInsertRowid } = db
+      .prepare("INSERT INTO bookings (slot_id, user_id, seats) VALUES (?, ?, ?)")
+      .run(slotId, userId, seats);
 
-  return {
-    ok: true,
-    bookingId: Number(lastInsertRowid),
-    seats,
-    seatsLeft: slot.seatsLeft - seats,
-  };
+    return {
+      ok: true,
+      bookingId: Number(lastInsertRowid),
+      seats,
+      seatsLeft: slot.seatsLeft - seats,
+    };
+  });
+
+  return checkAndInsert.immediate();
 }

@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bookSeats, isValidSeatCount } from "./bookings";
+import { bookSeats, describeBookingFailure, isValidSeatCount } from "./bookings";
 import { openDatabase } from "./db/connection";
 
 describe("isValidSeatCount", () => {
@@ -15,6 +15,18 @@ describe("isValidSeatCount", () => {
       expect(isValidSeatCount(value)).toBe(false);
     },
   );
+});
+
+describe("describeBookingFailure", () => {
+  it.each([
+    [0, "This tour is fully booked."],
+    [1, "Only 1 seat is left on this tour."],
+    [3, "Only 3 seats are left on this tour."],
+  ])("explains a slot with %i seats left", (seatsLeft, message) => {
+    const failure = { ok: false, reason: "not_enough_seats", seatsLeft } as const;
+
+    expect(describeBookingFailure(failure)).toBe(message);
+  });
 });
 
 describe("bookSeats", () => {
