@@ -89,6 +89,10 @@ export function listCategories(db: Database): string[] {
   return rows.map((row) => row.category);
 }
 
+export function placeExists(db: Database, placeId: number): boolean {
+  return db.prepare("SELECT 1 FROM places WHERE id = ?").get(placeId) !== undefined;
+}
+
 export function getPlaceDetail(
   db: Database,
   placeId: number,
