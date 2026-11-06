@@ -4,8 +4,6 @@
 
 I used **Claude Code** (Claude Opus 5.5) in VS Code for the whole project: planning, code, tests, browser checks, commit message drafts and first drafts of these docs. It did most of the writing. I chose the stack, directed the work one task at a time, reviewed the results, and made the commits myself.
 
-`AGENTS.md` comes from the Next.js template, which adds it for AI coding tools.
-
 ## Example prompts
 
 **"i want to make it with nextjs(ts) and sql lite so now i want you to break it with task steps then when i order you to do you have to do it"**
