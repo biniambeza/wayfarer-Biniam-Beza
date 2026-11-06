@@ -2,7 +2,7 @@
 
 ## Tools
 
-I used **Claude Code** (Claude Opus 5.5) in VS Code for the whole project: planning, code, tests, browser checks, commit message drafts and first drafts of these docs. It did most of the writing. I chose the stack, directed the work one task at a time, reviewed the results, and made the commits myself.
+I used **Gemini** (Gemini Flash 3.8) in VS Code for the whole project: planning, code, tests, browser checks, commit message drafts and first drafts of these docs. It did most of the writing. I chose the stack, directed the work one task at a time, reviewed the results, and made the commits myself.
 
 ## Example prompts
 
