@@ -1,7 +1,12 @@
 import type { Database } from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase } from "./db/connection";
-import { getActingUser, parseId, USER_ID_HEADER } from "./users";
+import {
+  getActingUser,
+  listSelectableUsers,
+  parseId,
+  USER_ID_HEADER,
+} from "./users";
 
 describe("parseId", () => {
   it("accepts a positive integer", () => {
@@ -27,6 +32,12 @@ describe("getActingUser", () => {
   });
 
   afterEach(() => db.close());
+
+  it("leaves background reviewers out of the switcher", () => {
+    db.exec("INSERT INTO users (id, name, selectable) VALUES (2, 'Traveller 1', 0)");
+
+    expect(listSelectableUsers(db)).toEqual([{ id: 1, name: "Sara" }]);
+  });
 
   it("returns the user named by the header", () => {
     expect(getActingUser(db, headersWith("1"))).toEqual({ id: 1, name: "Sara" });
