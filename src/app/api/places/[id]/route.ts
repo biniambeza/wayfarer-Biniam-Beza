@@ -1,8 +1,7 @@
 import { connection, type NextRequest } from "next/server";
 import { getDb } from "@/lib/db/connection";
 import { getPlaceDetail } from "@/lib/places";
-
-const POSITIVE_INTEGER = /^[1-9]\d*$/;
+import { parseId } from "@/lib/users";
 
 export async function GET(
   _request: NextRequest,
@@ -12,9 +11,8 @@ export async function GET(
   await connection();
 
   const { id } = await context.params;
-  const place = POSITIVE_INTEGER.test(id)
-    ? getPlaceDetail(getDb(), Number(id))
-    : null;
+  const placeId = parseId(id);
+  const place = placeId === null ? null : getPlaceDetail(getDb(), placeId);
 
   if (!place) {
     return Response.json({ error: "Place not found" }, { status: 404 });
